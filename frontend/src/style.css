@@ -1,0 +1,6 @@
+@import "tailwindcss";
+
+div[style*="z-index: 99999"],
+a[href*="primefaces.org"] {
+    display: none !important;
+}
