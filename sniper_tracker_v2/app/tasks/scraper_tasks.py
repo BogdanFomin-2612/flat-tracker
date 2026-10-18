@@ -1,4 +1,5 @@
 import asyncio
+import html
 import logging
 import re
 from datetime import datetime, timezone, timedelta
@@ -31,10 +32,15 @@ async def process_active_tasks():
             now = datetime.now(timezone.utc)
             tasks_to_process = []
 
+            # Задачи, которые проверяются впервые: их текущие объявления запоминаем без уведомлений,
+            # иначе пользователь сразу получит ~50 сообщений обо всей выдаче OLX
+            first_run_task_ids = set()
+
             # 2. Умный диспетчер: фильтруем задачи и блокируем их от дублирующих воркеров
             for task in all_tasks:
                 if not getattr(task, 'last_checked', None):
                     tasks_to_process.append(task)
+                    first_run_task_ids.add(task.id)
                     task.last_checked = datetime.now(timezone.utc)
                     session.add(task)
                     continue
@@ -69,7 +75,10 @@ async def process_active_tasks():
                 for ad_data in ads:
                     # Очистка и конвертация валюты
                     price_text = ad_data.get("price", "").lower()
-                    price_digits = re.sub(r"[^\d]", "", price_text)
+                    # Берём первое число с разделителями тысяч и отбрасываем копейки:
+                    # "2 470 647.91 грн." раньше превращалось в 247064791
+                    price_match = re.search(r"\d[\d\s ]*", price_text)
+                    price_digits = re.sub(r"\D", "", price_match.group()) if price_match else ""
                     clean_price = int(price_digits) if price_digits else 0
                     
                     if clean_price > 0:
@@ -90,10 +99,23 @@ async def process_active_tasks():
                         if task.max_price and clean_price > task.max_price:
                             continue
                             
-                    existing_ad = await session.execute(select(ScrapedAd).where(ScrapedAd.external_id == ext_id))
+                    # Дубликаты проверяем в рамках задачи: одно объявление может быть интересно разным пользователям
+                    existing_ad = await session.execute(
+                        select(ScrapedAd).where(ScrapedAd.task_id == task.id, ScrapedAd.external_id == ext_id)
+                    )
                     if existing_ad.scalars().first():
                         continue
-                        
+
+                    if task.id in first_run_task_ids:
+                        session.add(ScrapedAd(
+                            task_id=task.id,
+                            external_id=ext_id,
+                            title=ad_data.get("title", ""),
+                            price=clean_price,
+                            url=ad_data.get("url", "")
+                        ))
+                        continue
+
                     details = await scraper.fetch_ad_details(ad_data.get("url", ""))
                     await asyncio.sleep(1.5)
                     
@@ -119,12 +141,14 @@ async def process_active_tasks():
                         owner_badge = "👤 Собственник" if details.get("is_owner") else "🏢 Риелтор/Бизнес"
                         rooms_text = f"Комнат: {details['rooms']}" if details.get("rooms", 0) > 0 else "Комнаты не указаны"
                         
+                        # Название задачи и данные объявления приходят от пользователей/продавцов —
+                        # экранируем, иначе "<" или "&" ломают HTML и Telegram отклоняет сообщение
                         msg = (
-                            f"🎯 <b>Новая цель: {task.title}</b>\n\n"
-                            f"🏠 <b>{ad_data.get('title', '')}</b>\n"
-                            f"💰 {ad_data.get('price', '')}\n"
+                            f"🎯 <b>Новая цель: {html.escape(task.title)}</b>\n\n"
+                            f"🏠 <b>{html.escape(ad_data.get('title', ''))}</b>\n"
+                            f"💰 {html.escape(ad_data.get('price', ''))}\n"
                             f"📏 {rooms_text} | {owner_badge}\n\n"
-                            f"🔗 <a href='{ad_data.get('url', '')}'>Перейти к объявлению</a>"
+                            f"🔗 <a href=\"{html.escape(ad_data.get('url', ''), quote=True)}\">Перейти к объявлению</a>"
                         )
                         await send_telegram_message(task.owner.telegram_chat_id, msg)
             

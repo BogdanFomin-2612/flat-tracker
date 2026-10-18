@@ -1,8 +1,8 @@
-import httpx
 import random
 import logging
 from typing import Optional, List, Dict, Any
 from bs4 import BeautifulSoup
+from curl_cffi.requests import AsyncSession
 
 logger = logging.getLogger(__name__)
 
@@ -42,20 +42,22 @@ class RealEstateScraper:
             url = f"{url}{separator}search[order]=created_at:desc"
 
         proxy = self._get_random_proxy()
-        
-        # Надежная передача прокси-словаря в httpx (исправляет TypeError)
-        proxies = {"all://": proxy} if proxy else None
-        
+        proxies = {"http": proxy, "https": proxy} if proxy else None
+
         try:
-            # Настройка клиента с таймаутом и новыми заголовками
-            async with httpx.AsyncClient(proxies=proxies, headers=self.base_headers, timeout=15.0, follow_redirects=True) as client:
-                response = await client.get(url)
-                response.raise_for_status()
+            # OLX отдаёт 403 на TLS-отпечаток httpx, поэтому маскируемся под Chrome через curl_cffi.
+            # Заголовки берёт сам профиль impersonate, свои только язык.
+            async with AsyncSession(impersonate="chrome", proxies=proxies, timeout=15) as client:
+                response = await client.get(
+                    url,
+                    headers={"Accept-Language": self.base_headers["Accept-Language"]},
+                    allow_redirects=True,
+                )
+                if response.status_code >= 400:
+                    logger.error(f"HTTP ошибка при загрузке {url} (прокси: {proxy}): {response.status_code}")
+                    return ""
                 return response.text
-                
-        except httpx.HTTPStatusError as e:
-            logger.error(f"HTTP ошибка при загрузке {url} (прокси: {proxy}): {e}")
-            return ""
+
         except Exception as e:
             logger.error(f"Сетевая ошибка при загрузке {url} (прокси: {proxy}): {e}")
             return ""
@@ -73,9 +75,10 @@ class RealEstateScraper:
         
         for card in cards:
             try:
-                title_elem = card.find('h6')
+                # OLX периодически меняет вёрстку: сначала data-testid, потом старые теги как запасной вариант
+                title_elem = card.find(attrs={'data-testid': 'ad-card-title'}) or card.find(['h4', 'h6'])
                 price_elem = card.find('p', {'data-testid': 'ad-price'})
-                link_elem = card.find('a')
+                link_elem = card.find('a', {'data-testid': 'card-title-link'}) or card.find('a')
                 
                 if title_elem and price_elem and link_elem:
                     ad_url = link_elem.get('href')
@@ -104,13 +107,16 @@ class RealEstateScraper:
         soup = BeautifulSoup(html, 'html.parser')
         
         try:
+            # Берём только блок параметров объявления: "Приватна особа" встречается и в JSON внутри <script>,
+            # поэтому поиск по всей странице давал is_owner=True для любого объявления
+            params_container = soup.find(attrs={'data-testid': 'ad-parameters-container'})
+            params_list = params_container.find_all(['p', 'li']) if params_container else soup.find_all('li')
+
             # Проверка на собственника
-            author_type = soup.find(string=lambda text: text and "Приватна особа" in text)
-            if author_type:
+            if any(p.get_text(strip=True) == "Приватна особа" for p in params_list):
                 details["is_owner"] = True
-                
+
             # Парсинг количества комнат из характеристик
-            params_list = soup.find_all('li')
             for param in params_list:
                 text = param.text.lower()
                 if "кількість кімнат:" in text or "количество комнат:" in text:
