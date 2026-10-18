@@ -17,7 +17,9 @@ http.interceptors.request.use((config) => {
 http.interceptors.response.use(
     (response) => response,
     (error) => {
-        if (error.response?.status === 401) {
+        // На самом входе 401 означает неверный пароль, а не протухший токен: редирект стёр бы сообщение об ошибке
+        const isLoginRequest = error.config?.url?.includes('/users/login')
+        if (error.response?.status === 401 && !isLoginRequest) {
             localStorage.removeItem('token')
             window.location.href = '/login' // Жесткий редирект при протухшем токене
         }

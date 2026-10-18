@@ -1,7 +1,5 @@
 from celery import Celery
-import os
-
-REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
+from app.core.config import REDIS_URL
 
 celery_app = Celery(
     "sniper_worker",
@@ -16,6 +14,7 @@ celery_app.conf.update(
     result_serializer="json",
     timezone="Europe/Kiev",
     enable_utc=True,
+    broker_connection_retry_on_startup=True,
 )
 
 # Умный диспетчер запускается каждую 1 минуту и сам решает, чью задачу парсить

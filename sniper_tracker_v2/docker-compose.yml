@@ -1,4 +1,5 @@
-version: '3.8'
+# Локальная разработка: автоперезагрузка кода, порты доступны только с этого компьютера (127.0.0.1).
+# Для сервера используйте docker-compose.prod.yml.
 
 services:
   db:
@@ -7,32 +8,43 @@ services:
     restart: always
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD не задан в .env}
       POSTGRES_DB: ${POSTGRES_DB:-sniper_db}
     ports:
-      - "5432:5432"
+      # 5433 на хосте: порт 5432 может быть занят локальным PostgreSQL. Только localhost.
+      - "127.0.0.1:5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-sniper_db}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
 
   redis:
     image: redis:7-alpine
     container_name: sniper_redis
     restart: always
-    ports:
-      - "6379:6379"
+    # Redis без пароля — частый способ взлома сервера, а через него ещё и подкидывают задачи в Celery
+    command: redis-server --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD не задан в .env}
+    # Порт наружу не публикуется: API и Celery ходят в Redis внутри docker-сети
 
   web:
     build: .
     container_name: sniper_web
     restart: always
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    # Перед стартом API применяем миграции, иначе lifespan упадёт на отсутствующих таблицах
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
     volumes:
       - .:/app
     ports:
-      - "8000:8000"
+      # Порт на хосте можно переопределить через API_PORT в .env
+      - "127.0.0.1:${API_PORT:-8000}:8000"
     depends_on:
-      - db
-      - redis
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
     env_file:
       - .env
 
@@ -54,7 +66,8 @@ services:
     build: .
     container_name: sniper_celery_beat
     restart: always
-    command: celery -A app.core.celery_app beat --loglevel=info
+    # Файл расписания во /tmp: в рабочей папке ему не место (и в git тоже)
+    command: celery -A app.core.celery_app beat --loglevel=info --schedule /tmp/celerybeat-schedule
     volumes:
       - .:/app
     depends_on:

@@ -21,7 +21,10 @@ const handleLogin = async () => {
     localStorage.setItem('token', response.data.access_token)
     router.push('/dashboard')
   } catch (err) {
-    error.value = 'Неверный email или пароль'
+    // 429 — сервер временно блокирует вход после серии неудачных попыток (защита от перебора)
+    error.value = err.response?.status === 429
+      ? 'Слишком много попыток входа. Подождите минуту.'
+      : 'Неверный email или пароль'
   }
 }
 </script>

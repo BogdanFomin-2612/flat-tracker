@@ -1,0 +1,9 @@
+# Секреты не должны попадать в образ: они передаются через env_file при запуске
+.env
+.env.*
+!.env.example
+
+__pycache__/
+*.pyc
+celerybeat-schedule*
+.git

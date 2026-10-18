@@ -1,17 +1,18 @@
-fastapi==0.104.1
-uvicorn[standard]==0.24.0.post1
-sqlalchemy==2.0.23
-asyncpg==0.29.0
-alembic==1.12.1
-pydantic[email]==2.5.2
-pydantic-settings==2.1.0
-jinja2==3.1.2
-celery==5.3.6
-redis==5.0.1
-python-multipart==0.0.6
+fastapi==0.144.0
+uvicorn[standard]==0.54.0
+sqlalchemy>=2.0.36,<2.1
+asyncpg==0.32.0
+alembic==1.20.0
+pydantic[email]==2.14.1
+celery==5.6.3
+redis==5.2.1
+python-multipart==0.0.32
 passlib==1.7.4
-bcrypt==3.2.2
-beautifulsoup4==4.12.3
-curl-cffi==0.7.3
-python-jose[cryptography]
-httpx==0.24.1
+# bcrypt>=4.1 несовместим с passlib 1.7.4
+bcrypt==4.0.1
+beautifulsoup4==4.15.0
+# Должна проходить антибот-защиту OLX (impersonate="chrome"); обновлять только с проверкой парсера
+curl-cffi==0.16.3
+pyjwt==2.15.1
+slowapi==0.1.10
+httpx==0.28.1
