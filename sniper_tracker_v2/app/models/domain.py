@@ -27,6 +27,8 @@ class User(Base):
     
     # НОВОЕ ПОЛЕ ДЛЯ ПРИВЯЗКИ TELEGRAM (Deep Linking)
     telegram_connect_token: Mapped[Optional[str]] = mapped_column(String(100), unique=True, index=True, nullable=True)
+    # После этого момента ссылка привязки недействительна
+    telegram_connect_token_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
@@ -49,7 +51,9 @@ class SearchTask(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
     
     title: Mapped[str] = mapped_column(String(150), nullable=False)
-    url: Mapped[str] = mapped_column(Text, nullable=False) # Сюда вставляем готовую ссылку с OLX
+    url: Mapped[str] = mapped_column(Text, nullable=False) # Ссылка на поиск OLX (собирается из city/deal_type или задаётся вручную)
+    city: Mapped[Optional[str]] = mapped_column(String(50), nullable=True) # Слаг города OLX, None = вся Украина
+    deal_type: Mapped[Optional[str]] = mapped_column(String(20), nullable=True) # "rent" или "sale"
 
     # Специфика недвижимости
     min_price: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)

@@ -28,9 +28,15 @@
           </div>
 
           <form @submit.prevent="createTask" class="space-y-4">
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <input v-model="form.title" type="text" placeholder="Название (напр. 1-к на Подоле)" required class="w-full px-4 py-3 rounded-xl border border-slate-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all">
-              <input v-model="form.url" type="url" placeholder="Вставь ссылку на поиск с OLX" required class="w-full px-4 py-3 rounded-xl border border-slate-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <input v-model="form.title" type="text" placeholder="Название задачи:" required class="w-full px-4 py-3 rounded-xl border border-slate-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all">
+              <select v-model="form.city" class="w-full px-4 py-3 rounded-xl border border-slate-200 bg-white focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all">
+                <option value="">Вся Украина</option>
+                <option v-for="city in options.cities" :key="city.value" :value="city.value">{{ city.label }}</option>
+              </select>
+              <select v-model="form.deal_type" class="w-full px-4 py-3 rounded-xl border border-slate-200 bg-white focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all">
+                <option v-for="deal in options.deal_types" :key="deal.value" :value="deal.value">{{ deal.label }}</option>
+              </select>
             </div>
             
             <div class="grid grid-cols-2 md:grid-cols-4 gap-4 bg-slate-50 p-4 rounded-xl">
@@ -44,7 +50,10 @@
               </div>
               <div>
                 <label class="block text-xs font-semibold text-slate-500 uppercase mb-1">Комнат</label>
-                <input v-model.number="form.rooms" type="number" placeholder="Точно" class="w-full px-3 py-2 rounded-lg border border-slate-200 outline-none">
+                <select v-model="form.rooms" class="w-full px-3 py-2 rounded-lg border border-slate-200 bg-white outline-none">
+                  <option :value="null">Любое</option>
+                  <option v-for="n in 5" :key="n" :value="n">{{ n === 5 ? '5+' : n }}</option>
+                </select>
               </div>
               <div class="flex items-center justify-center pt-5">
                 <label class="flex items-center gap-2 cursor-pointer">
@@ -67,7 +76,12 @@
             <span class="bg-slate-200 text-slate-600 px-2 py-0.5 rounded-full text-xs">{{ tasks.length }} / {{ isPro ? 10 : 1 }}</span>
           </h2>
           
-          <div v-if="tasks.length === 0" class="text-center py-10 bg-white rounded-2xl border border-slate-100 border-dashed">
+          <div v-if="tasksLoadError" class="text-center py-10 bg-red-50 rounded-2xl border border-red-100">
+            <p class="text-red-700 font-medium mb-3">Не удалось загрузить задачи.</p>
+            <button @click="fetchTasks" class="text-sm font-bold text-red-700 underline">Повторить</button>
+          </div>
+
+          <div v-else-if="tasks.length === 0" class="text-center py-10 bg-white rounded-2xl border border-slate-100 border-dashed">
             <p class="text-slate-400 font-medium">Нет активных задач. Создайте первую выше!</p>
           </div>
 
@@ -75,7 +89,11 @@
             <div v-for="task in tasks" :key="task.id" class="bg-white p-5 rounded-xl border border-slate-200 flex justify-between items-center hover:shadow-md transition-shadow">
               <div>
                 <h3 class="font-bold text-slate-900 text-lg">{{ task.title }}</h3>
-                <div class="flex gap-3 mt-2 text-sm text-slate-500 font-medium">
+                <div class="flex flex-wrap gap-3 mt-2 text-sm text-slate-500 font-medium">
+                  <!-- У старых задач со ссылкой вручную city/deal_type пустые -->
+                  <span v-if="task.city || task.deal_type" class="bg-slate-100 px-2 py-1 rounded-md">{{ cityLabel(task.city) }}</span>
+                  <span v-if="task.deal_type" class="bg-slate-100 px-2 py-1 rounded-md">{{ dealLabel(task.deal_type) }}</span>
+                  <span v-if="task.owner_only" class="bg-slate-100 px-2 py-1 rounded-md">Без риелторов</span>
                   <span v-if="task.min_price || task.max_price" class="bg-slate-100 px-2 py-1 rounded-md">
                     ₴ {{ task.min_price || 0 }} - {{ task.max_price || '∞' }}
                   </span>
@@ -166,8 +184,11 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+
 const router = useRouter()
 const tasks = ref([])
+const tasksLoadError = ref(false)
 const errorMessage = ref('')
 const isLoading = ref(false)
 const showPaymentModal = ref(false)
@@ -175,19 +196,37 @@ const isPro = ref(false)
 const isConnectingTelegram = ref(false)
 const isTelegramConnected = ref(false)
 
-const form = ref({
+const emptyForm = () => ({
   title: '',
-  url: '',
+  city: 'kiev',
+  deal_type: 'rent',
   min_price: null,
   max_price: null,
   rooms: null,
   owner_only: false
 })
 
+const form = ref(emptyForm())
+const options = ref({ cities: [], deal_types: [] })
+
+const cityLabel = (slug) => options.value.cities.find((c) => c.value === slug)?.label || (slug ? slug : 'Вся Украина')
+const dealLabel = (value) => options.value.deal_types.find((d) => d.value === value)?.label || value
+
+const fetchOptions = async () => {
+  try {
+    const response = await fetch(`${API_URL}/tasks/options`)
+    if (response.ok) {
+      options.value = await response.json()
+    }
+  } catch (error) {
+    console.error('Ошибка загрузки справочников', error)
+  }
+}
+
 const fetchUser = async () => {
   try {
     const token = localStorage.getItem('token')
-    const response = await fetch('http://localhost:8000/users/me', {
+    const response = await fetch(`${API_URL}/users/me`, {
       headers: { 'Authorization': `Bearer ${token}` }
     })
     if (response.ok) {
@@ -209,13 +248,18 @@ const fetchTasks = async () => {
       router.push('/login')
       return
     }
-    const response = await fetch('http://localhost:8000/tasks/', {
+    const response = await fetch(`${API_URL}/tasks/`, {
       headers: { 'Authorization': `Bearer ${token}` }
     })
     if (response.ok) {
       tasks.value = await response.json()
+      tasksLoadError.value = false
+    } else {
+      tasksLoadError.value = true
     }
   } catch (error) {
+    // Без этого флага при сбое API показывалось "Нет активных задач", хотя задачи есть
+    tasksLoadError.value = true
     console.error('Ошибка загрузки задач', error)
   }
 }
@@ -226,21 +270,29 @@ const createTask = async () => {
   
   try {
     const token = localStorage.getItem('token')
-    const response = await fetch('http://localhost:8000/tasks/', {
+    const response = await fetch(`${API_URL}/tasks/`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${token}`
       },
-      body: JSON.stringify(form.value)
+      // Очищенное числовое поле даёт '' — бэкенд ждёт null, иначе 422
+      body: JSON.stringify({
+        ...form.value,
+        city: form.value.city || null,
+        min_price: form.value.min_price === '' ? null : form.value.min_price,
+        max_price: form.value.max_price === '' ? null : form.value.max_price
+      })
     })
-    
+
     if (response.ok) {
-      form.value = { title: '', url: '', min_price: null, max_price: null, rooms: null, owner_only: false }
+      form.value = emptyForm()
       await fetchTasks()
     } else if (response.status === 403) {
       const errorData = await response.json()
       errorMessage.value = errorData.detail || 'Достигнут лимит задач. Перейдите на PRO.'
+      // Лимит считается на сервере — подтягиваем актуальный список, чтобы он совпадал со счётчиком
+      await fetchTasks()
     } else {
       errorMessage.value = 'Ошибка при создании задачи. Проверьте данные.'
     }
@@ -254,7 +306,7 @@ const createTask = async () => {
 const deleteTask = async (id) => {
   try {
     const token = localStorage.getItem('token')
-    await fetch(`http://localhost:8000/tasks/${id}`, {
+    await fetch(`${API_URL}/tasks/${id}`, {
       method: 'DELETE',
       headers: { 'Authorization': `Bearer ${token}` }
     })
@@ -267,7 +319,7 @@ const deleteTask = async (id) => {
 const simulatePayment = async () => {
   try {
     const token = localStorage.getItem('token')
-    const response = await fetch('http://localhost:8000/users/upgrade', {
+    const response = await fetch(`${API_URL}/users/upgrade`, {
       method: 'POST',
       headers: { 
         'Authorization': `Bearer ${token}`,
@@ -280,7 +332,8 @@ const simulatePayment = async () => {
       showPaymentModal.value = false
       await fetchTasks()
     } else {
-      alert('Ошибка при обновлении тарифа на сервере.')
+      const errorData = await response.json().catch(() => ({}))
+      alert(errorData.detail || 'Ошибка при обновлении тарифа на сервере.')
     }
   } catch (error) {
     console.error('Ошибка оплаты:', error)
@@ -291,7 +344,7 @@ const connectTelegram = async () => {
   isConnectingTelegram.value = true
   try {
     const token = localStorage.getItem('token')
-    const response = await fetch('http://localhost:8000/users/me/telegram-link', {
+    const response = await fetch(`${API_URL}/users/me/telegram-link`, {
       headers: { 'Authorization': `Bearer ${token}` }
     })
     
@@ -315,6 +368,7 @@ const logout = () => {
 }
 
 onMounted(() => {
+  fetchOptions()
   fetchUser()
   fetchTasks()
 })

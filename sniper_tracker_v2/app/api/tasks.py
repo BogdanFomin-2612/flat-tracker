@@ -7,8 +7,17 @@ from app.core.database import get_async_session
 from app.models.domain import SearchTask, User, SubscriptionPlan
 from app.schemas.task import TaskCreate, TaskResponse
 from app.api.deps import get_current_user
+from app.services.olx_search import CITIES, DEAL_TYPES, build_search_url
 
 router = APIRouter(prefix="/tasks", tags=["Tasks"])
+
+@router.get("/options")
+async def get_task_options():
+    """Справочники для формы создания задачи: города и типы сделки."""
+    return {
+        "cities": [{"value": slug, "label": name} for slug, name in CITIES.items()],
+        "deal_types": [{"value": key, "label": label} for key, (_, label) in DEAL_TYPES.items()],
+    }
 
 @router.post("/", response_model=TaskResponse, status_code=status.HTTP_201_CREATED)
 async def create_task(
@@ -43,11 +52,23 @@ async def create_task(
             detail=f"Достигнут лимит задач для вашего тарифа ({max_tasks}). Пожалуйста, обновите подписку для расширения лимитов."
         )
 
-    # 5. Создание задачи
+    # 5. Ссылку на поиск OLX собираем только сами
+    url = build_search_url(
+        deal_type=task_in.deal_type,
+        city=task_in.city,
+        min_price=task_in.min_price,
+        max_price=task_in.max_price,
+        rooms=task_in.rooms,
+        owner_only=task_in.owner_only,
+    )
+
+    # 6. Создание задачи
     new_task = SearchTask(
         user_id=fresh_user.id,
         title=task_in.title,
-        url=task_in.url,
+        url=url,
+        city=task_in.city,
+        deal_type=task_in.deal_type,
         min_price=task_in.min_price,
         max_price=task_in.max_price,
         rooms=task_in.rooms,
