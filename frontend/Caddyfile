@@ -1,0 +1,28 @@
+# SITE_ADDRESS — домен сайта (например, sniper.example.com). Для домена Caddy сам получает
+# и продлевает HTTPS-сертификат Let's Encrypt и перенаправляет http -> https.
+{$SITE_ADDRESS} {
+	encode gzip
+
+	# API доступен только через прокси по адресу /api/...; сам контейнер API наружу не открыт
+	handle_path /api/* {
+		reverse_proxy web:8000
+	}
+
+	# Фронтенд (SPA): все неизвестные пути отдаём index.html, маршрутизацией занимается vue-router
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		# Скрипты и запросы только со своего домена: снижает ущерб от возможной XSS
+		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+		-Server
+	}
+}
