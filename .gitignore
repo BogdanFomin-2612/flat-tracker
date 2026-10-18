@@ -1,3 +1,7 @@
 .env
 node_modules/
 __pycache__/
+# Файл расписания Celery beat создаётся при запуске
+celerybeat-schedule*
+# Служебные файлы плагинов Claude Code
+.omc/
